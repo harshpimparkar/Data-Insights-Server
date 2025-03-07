@@ -1,0 +1,303 @@
+@app.route('/v1/heavy-insights', methods=['GET'])
+def generate_insights():
+    """Generate insights and visualizations from the uploaded file when requested via GET"""
+    try:
+        # Validate file existence
+        if not current_file.get("path"):
+            return jsonify({
+                "status": "fail",
+                "message": "No file uploaded. Please upload a file first."
+            }), 400
+
+        # Validate file readability and DataFrame structure
+        try:
+            generator = DataInsightsGenerator(current_file["path"])
+            if generator.df.empty:
+                return jsonify({
+                    "status": "fail",
+                    "message": "The uploaded file contains no data."
+                }), 400
+            if len(generator.df.columns) == 0:
+                return jsonify({
+                    "status": "fail",
+                    "message": "The uploaded file contains no columns."
+                }), 400
+        except Exception as e:
+            return jsonify({
+                "status": "fail",
+                "message": f"Failed to read the uploaded file: {str(e)}"
+            }), 400
+
+        # Get optional query parameters
+        target_column = request.args.get('target_column')
+        generate_llm_analysis = request.args.get('generate_llm_analysis', 'true').lower() == 'true'
+
+        logging.info(f"Generating insights for file: {current_file['name']}")
+        
+        # Initialize insights dictionary with safe defaults
+        insights = {}
+        
+        # Generate each type of insight with individual try-except blocks
+        try:
+            insights["descriptive"] = generator.generate_descriptive_analytics()
+        except Exception as e:
+            logging.warning(f"Failed to generate descriptive analytics: {str(e)}")
+            insights["descriptive"] = {"error": str(e)}
+
+        try:
+            insights["diagnostic"] = generator.generate_diagnostic_analytics()
+        except Exception as e:
+            logging.warning(f"Failed to generate diagnostic analytics: {str(e)}")
+            insights["diagnostic"] = {"error": str(e)}
+
+        try:
+            insights["prescriptive"] = generator.generate_prescriptive_analytics()
+        except Exception as e:
+            logging.warning(f"Failed to generate prescriptive analytics: {str(e)}")
+            insights["prescriptive"] = {"error": str(e)}
+
+        try:
+            insights["outliers"] = generator.detect_outliers()
+        except Exception as e:
+            logging.warning(f"Failed to detect outliers: {str(e)}")
+            insights["outliers"] = {"error": str(e)}
+
+        # Generate predictive analytics if target column is provided
+        if target_column:
+            if target_column not in generator.df.columns:
+                insights["predictive"] = {
+                    "error": f"Target column '{target_column}' not found in dataset"
+                }
+            else:
+                try:
+                    insights["predictive"] = generator.generate_predictive_analytics(target_column)
+                except Exception as e:
+                    logging.warning(f"Failed to generate predictive analytics: {str(e)}")
+                    insights["predictive"] = {"error": str(e)}
+
+        # Convert insights to serializable format with error handling
+        try:
+            insights = generator._convert_to_serializable(insights)
+        except Exception as e:
+            logging.error(f"Failed to convert insights to serializable format: {str(e)}")
+            return jsonify({
+                "status": "fail",
+                "message": "Failed to process generated insights"
+            }), 500
+
+        response_data = {
+            "status": "success",
+            "file_details": {
+                "name": current_file["name"],
+                "path": current_file["path"]
+            },
+            "insights": insights
+        }
+
+        # Generate LLM analysis and visualization recommendations if requested
+        if generate_llm_analysis:
+            logging.info("Generating LLM analysis and visualization recommendations")
+            try:
+                insights_context = format_insights_for_llm(insights)
+                llm_prompt = generate_insight_llm_prompt(insights_context)
+                llm_response = initialize_groq_api(llm_prompt)
+                response_data["llm_analysis"] = llm_response
+                
+                # Generate visualization recommendations from LLM
+                viz_prompt = f"""
+                Based on the data analysis and insights provided, recommend appropriate visualizations.
+                For each visualization, provide:
+                1. Chart type (choose from: line, bar, scatter, area)
+                2. X-axis column
+                3. Y-axis column
+                4. Title
+                5. Brief description of what the visualization shows
+                
+                Data columns: {', '.join(generator.df.columns)}
+                
+                Format your response as:
+                {{
+                    "visualizations": [
+                        {{
+                            "type": "chart_type",
+                            "x_column": "column_name",
+                            "y_column": "column_name",
+                            "title": "chart_title",
+                            "description": "brief_description"
+                        }},
+                        ...
+                    ]
+                }}
+                """
+                
+                viz_recommendations = initialize_groq_api(viz_prompt)
+                
+                # Generate the visualizations
+                try:
+                    viz_data = []
+                    for viz in viz_recommendations.get('visualizations', []):
+                        chart_data = generator.df[[viz['x_column'], viz['y_column']]].dropna()
+                        chart_data = chart_data.to_dict('records')
+                        
+                        viz_data.append({
+                            'spec': {
+                                'plot_type': viz['type'],
+                                'x_column': viz['x_column'],
+                                'y_column': viz['y_column'],
+                                'title': viz['title']
+                            },
+                            'description': viz['description'],
+                            'data': chart_data
+                        })
+                    
+                    response_data["visualizations"] = viz_data
+                    
+                except Exception as e:
+                    logging.error(f"Failed to generate visualizations: {str(e)}")
+                    response_data["visualizations"] = {"error": str(e)}
+                
+            except Exception as e:
+                logging.error(f"Failed to generate LLM analysis: {str(e)}")
+                response_data["llm_analysis"] = {"error": str(e)}
+                response_data["visualizations"] = {"error": str(e)}
+
+        # Update file state
+        current_file["has_insights"] = True
+        current_file["last_insights"] = insights
+
+        logging.info("Successfully generated insights and visualizations")
+        return jsonify(response_data), 200
+
+    except Exception as e:
+        logging.error(f"Error generating insights: {str(e)}", exc_info=True)
+        return jsonify({
+            "status": "fail",
+            "message": str(e),
+            "type": str(type(e).__name__),
+            "details": "An unexpected error occurred while generating insights"
+        }), 500
+
+
+        # @app.route('/v1/heavy-insights', methods=['GET'])
+# def generate_insights():
+#     """Generate insights from the uploaded file when requested via GET"""
+#     try:
+#         # Validate file existence
+#         if not current_file.get("path"):
+#             return jsonify({
+#                 "status": "fail",
+#                 "message": "No file uploaded. Please upload a file first."
+#             }), 400
+
+#         # Validate file readability and DataFrame structure
+#         try:
+#             generator = DataInsightsGenerator(current_file["path"])
+#             if generator.df.empty:
+#                 return jsonify({
+#                     "status": "fail",
+#                     "message": "The uploaded file contains no data."
+#                 }), 400
+#             if len(generator.df.columns) == 0:
+#                 return jsonify({
+#                     "status": "fail",
+#                     "message": "The uploaded file contains no columns."
+#                 }), 400
+#         except Exception as e:
+#             return jsonify({
+#                 "status": "fail",
+#                 "message": f"Failed to read the uploaded file: {str(e)}"
+#             }), 400
+
+#         # Get optional query parameters
+#         target_column = request.args.get('target_column')
+#         generate_llm_analysis = request.args.get('generate_llm_analysis', 'true').lower() == 'true'
+
+#         logging.info(f"Generating insights for file: {current_file['name']}")
+        
+#         # Initialize insights dictionary with safe defaults
+#         insights = {}
+        
+#         # Generate each type of insight with individual try-except blocks
+#         try:
+#             insights["descriptive"] = generator.generate_descriptive_analytics()
+#         except Exception as e:
+#             logging.warning(f"Failed to generate descriptive analytics: {str(e)}")
+#             insights["descriptive"] = {"error": str(e)}
+
+#         try:
+#             insights["diagnostic"] = generator.generate_diagnostic_analytics()
+#         except Exception as e:
+#             logging.warning(f"Failed to generate diagnostic analytics: {str(e)}")
+#             insights["diagnostic"] = {"error": str(e)}
+
+#         try:
+#             insights["prescriptive"] = generator.generate_prescriptive_analytics()
+#         except Exception as e:
+#             logging.warning(f"Failed to generate prescriptive analytics: {str(e)}")
+#             insights["prescriptive"] = {"error": str(e)}
+
+#         try:
+#             insights["outliers"] = generator.detect_outliers()
+#         except Exception as e:
+#             logging.warning(f"Failed to detect outliers: {str(e)}")
+#             insights["outliers"] = {"error": str(e)}
+
+#         # Generate predictive analytics if target column is provided
+#         if target_column:
+#             if target_column not in generator.df.columns:
+#                 insights["predictive"] = {
+#                     "error": f"Target column '{target_column}' not found in dataset"
+#                 }
+#             else:
+#                 try:
+#                     insights["predictive"] = generator.generate_predictive_analytics(target_column)
+#                 except Exception as e:
+#                     logging.warning(f"Failed to generate predictive analytics: {str(e)}")
+#                     insights["predictive"] = {"error": str(e)}
+
+#         # Convert insights to serializable format with error handling
+#         try:
+#             insights = generator._convert_to_serializable(insights)
+#         except Exception as e:
+#             logging.error(f"Failed to convert insights to serializable format: {str(e)}")
+#             return jsonify({
+#                 "status": "fail",
+#                 "message": "Failed to process generated insights"
+#             }), 500
+
+#         response_data = {
+#             "status": "success",
+#             "file_details": {
+#                 "name": current_file["name"],
+#                 "path": current_file["path"]
+#             },
+#             "insights": insights
+#         }
+
+#         # Generate LLM analysis if requested
+#         if generate_llm_analysis:
+#             logging.info("Generating LLM analysis of insights")
+#             try:
+#                 insights_context = format_insights_for_llm(insights)
+#                 llm_prompt = generate_insight_llm_prompt(insights_context)
+#                 llm_response = initialize_groq_api(llm_prompt)
+#                 response_data["llm_analysis"] = llm_response
+#             except Exception as e:
+#                 logging.error(f"Failed to generate LLM analysis: {str(e)}")
+#                 response_data["llm_analysis"] = {"error": str(e)}
+
+#         # Update file state
+#         current_file["has_insights"] = True
+#         current_file["last_insights"] = insights
+
+#         logging.info("Successfully generated insights")
+#         return jsonify(response_data), 200
+
+#     except Exception as e:
+#         logging.error(f"Error generating insights: {str(e)}", exc_info=True)
+#         return jsonify({
+#             "status": "fail",
+#             "message": str(e),
+#             "type": str(type(e).__name__),
+#             "details": "An unexpected error occurred while generating insights"
+#         }), 500
