@@ -13,15 +13,15 @@ from InsightHelper.InsightHelper import format_insights_for_llm,generate_insight
 from QueryHelper.QueryHelper import format_context_from_matches,generate_llm_prompt
 from InsightGenerator import DataInsightsGenerator
 from GroqInitialize import initialize_groq_api
-from server.QueryHelper.CSVtoEmbedding import EmbeddingGenerator
-from StoreEmbeddings import store_embeddings
-from QuerytoEmbeddings import query_to_embedding
+# from server.QueryHelper.CSVtoEmbedding import EmbeddingGenerator
+# from StoreEmbeddings import store_embeddings
+# from QuerytoEmbeddings import query_to_embedding
 from GeminiHelper.gemini_service import VisualizationService
 from ChatVis.ChatToVisGenerator import ChatToVisGenerator
 from ChatAnalysis.ChatToAnalysisGenerator import ChatToAnalysisGenerator
 # chat_to_vis_service = ChatVisualizationService()
 viz_service = VisualizationService()
-emb_service = EmbeddingGenerator()
+# emb_service = EmbeddingGenerator()
 # Load environment variables
 load_dotenv()
 # Initialize the Flask app
@@ -272,194 +272,6 @@ def get_csv_metadata():
             "details": "An unexpected error occurred while generating metadata"
         }), 500
 
-# Deprecated Route do not use: 
-@app.route('/v1/csv-query', methods=['POST'])
-def process_and_query():
-    """Combined endpoint to process embeddings and query in one step"""
-    try:
-        logging.info("Received heavy-query request")
-        logging.debug(f"Request JSON: {request.json}")
-        
-        # Check if file exists
-        if not current_file.get("path"):
-            logging.error("No file uploaded before query attempt")
-            return jsonify({
-                "status": "fail", 
-                "message": "No file uploaded. Please upload a file first.",
-                "error_code": "NO_FILE"
-            }), 400
-
-        # Validate request JSON
-        if not request.is_json:
-            logging.error("Request missing JSON payload")
-            return jsonify({
-                "status": "fail",
-                "message": "Request must include JSON payload",
-                "error_code": "INVALID_REQUEST"
-            }), 400
-
-        data = request.json
-        if not data:
-            logging.error("Empty JSON payload received")
-            return jsonify({
-                "status": "fail",
-                "message": "Request body cannot be empty",
-                "error_code": "EMPTY_PAYLOAD"
-            }), 400
-
-        if "query" not in data:
-            logging.error("Query parameter missing from request")
-            return jsonify({
-                "status": "fail",
-                "message": "Query parameter is required",
-                "error_code": "MISSING_QUERY"
-            }), 400
-
-        query = data["query"]
-        if not isinstance(query, str) or not query.strip():
-            logging.error(f"Invalid query format or empty query: {query}")
-            return jsonify({
-                "status": "fail",
-                "message": "Query must be a non-empty string",
-                "error_code": "INVALID_QUERY"
-            }), 400
-
-        # Step 1: Generate and store embeddings if not already done
-        if not current_file["has_embeddings"]:
-            logging.info(f"Generating embeddings for file: {current_file['name']}")
-            
-            result = emb_service.generate_embeddings(current_file["path"])
-            if result["status"] != "success":
-                logging.error(f"Embedding generation failed: {result.get('message', 'Unknown error')}")
-                return jsonify(result), 500
-
-            # Fix: Use the 'data' key instead of 'pinecone_data'
-            embeddings_data = result.get("data", [])
-            if not embeddings_data:
-                logging.error("No embeddings generated from file")
-                return jsonify({
-                    "status": "fail",
-                    "message": "No embeddings generated",
-                    "error_code": "NO_EMBEDDINGS"
-                }), 500
-
-            # Store embeddings with proper data structure
-            store_result = store_embeddings(
-                embeddings=embeddings_data,
-                namespace=current_file["namespace"]
-            )
-            
-            if store_result["status"] != "success":
-                logging.error(f"Failed to store embeddings: {store_result.get('message', 'Unknown error')}")
-                return jsonify(store_result), 500
-
-            current_file["has_embeddings"] = True
-            logging.info(f"Successfully stored {store_result.get('num_embeddings', 0)} embeddings")
-
-        # Step 2: Process query and get results
-        logging.info(f"Processing query: {query}")
-        embedding_response = query_to_embedding(query)
-        if embedding_response.get("status") != "success":
-            logging.error(f"Query embedding failed: {embedding_response.get('message', 'Unknown error')}")
-            return jsonify(embedding_response), 400
-
-        query_embedding = embedding_response.get("embedding")
-        if not query_embedding:
-            logging.error("No embedding generated for query")
-            return jsonify({
-                "status": "fail",
-                "message": "Failed to generate query embedding",
-                "error_code": "NO_QUERY_EMBEDDING"
-            }), 500
-
-        try:
-            results = index.query(
-                namespace=current_file["namespace"],
-                vector=query_embedding,
-                top_k=25,
-                include_values=False,
-                include_metadata=True
-            )
-        except Exception as e:
-            logging.error(f"Pinecone query failed: {str(e)}", exc_info=True)
-            return jsonify({
-                "status": "fail",
-                "message": "Vector database query failed",
-                "error_code": "VECTOR_QUERY_FAILED",
-                "error_details": str(e)
-            }), 500
-
-        # Process matches with improved error handling
-        processed_matches = []
-        if hasattr(results, 'matches'):
-            for i, match in enumerate(results.matches):
-                try:
-                    processed_match = {
-                        "id": str(match.id),
-                        "score": float(match.score) if hasattr(match, 'score') else 0.0,
-                        "metadata": dict(match.metadata) if hasattr(match, 'metadata') and match.metadata is not None else {}
-                    }
-                    processed_matches.append(processed_match)
-                except Exception as e:
-                    logging.error(f"Error processing match {i}: {str(e)}", exc_info=True)
-                    continue
-
-        if not processed_matches:
-            return jsonify({
-                "status": "success",
-                "message": "No relevant matches found",
-                "file_details": {
-                    "name": current_file["name"],
-                    "namespace": current_file["namespace"]
-                },
-                "embeddings_status": {
-                    "was_generated": not current_file["has_embeddings"]
-                },
-                "query_results": {
-                    "query": query,
-                    "matches": []
-                }
-            }), 200
-
-        context = format_context_from_matches(processed_matches, query)
-        llm_prompt = generate_llm_prompt(query, context)
-        llm_response = initialize_groq_api(llm_prompt)
-
-        if llm_response is None:
-            logging.error("Failed to get LLM response")
-            llm_response = {"error": "Failed to get LLM response"}
-        elif isinstance(llm_response, str):
-            llm_response = {"response": llm_response}
-
-        response_data = {
-            "status": "success",
-            "file_details": {
-                "name": current_file["name"],
-                "namespace": current_file["namespace"]
-            },
-            "embeddings_status": {
-                "was_generated": not current_file["has_embeddings"],
-                "message": "Embeddings were generated and stored"
-            },
-            "query_results": {
-                "query": query,
-                "llm_response": llm_response,
-                "matches": processed_matches
-            }
-        }
-
-        logging.info("Query processed successfully")
-        return jsonify(response_data), 200
-
-    except Exception as e:
-        logging.error(f"Unexpected error processing query: {str(e)}", exc_info=True)
-        return jsonify({
-            "status": "fail",
-            "message": "Query processing failed",
-            "error_code": "UNEXPECTED_ERROR",
-            "error_details": str(e)
-        }), 500
-        
 @app.route('/v1/csv-insights', methods=['GET'])
 def generate_insights():
     """Generate insights and visualizations from the uploaded file"""
