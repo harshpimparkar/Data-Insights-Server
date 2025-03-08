@@ -13,16 +13,16 @@ from InsightHelper.InsightHelper import format_insights_for_llm,generate_insight
 from QueryHelper.QueryHelper import format_context_from_matches,generate_llm_prompt
 from InsightGenerator import DataInsightsGenerator
 from GroqInitialize import initialize_groq_api
-# from server.QueryHelper.CSVtoEmbedding import EmbeddingGenerator
-# from StoreEmbeddings import store_embeddings
-# from QuerytoEmbeddings import query_to_embedding
 from GeminiHelper.gemini_service import VisualizationService
 from ChatVis.ChatToVisGenerator import ChatToVisGenerator
 from ChatAnalysis.ChatToAnalysisGenerator import ChatToAnalysisGenerator
+# from server.QueryHelper.CSVtoEmbedding import EmbeddingGenerator
+# from StoreEmbeddings import store_embeddings
+# from QuerytoEmbeddings import query_to_embedding
 # chat_to_vis_service = ChatVisualizationService()
-viz_service = VisualizationService()
 # emb_service = EmbeddingGenerator()
 # Load environment variables
+viz_service = VisualizationService()
 load_dotenv()
 # Initialize the Flask app
 app = Flask(__name__)
