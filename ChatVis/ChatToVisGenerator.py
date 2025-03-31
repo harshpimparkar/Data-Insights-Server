@@ -124,7 +124,13 @@ class ChatToVisGenerator:
             # Create focused prompt for visualization
             prompt = f"""
             User Query: {user_query}
-            Analyze the query and determine the most suitable visualization type (bar, line, scatter, histogram, boxplot, etc.).
+            Consider these advanced visualization types when appropriate:
+            - Violin plots (sns.violinplot) for distribution comparison
+            - Heatmaps (sns.heatmap) for correlation matrices
+            - Facet grids (sns.FacetGrid) for multi-dimensional analysis
+            - Pair plots (sns.pairplot) for exploring relationships
+            - Interactive elements (when supported)
+            - Annotations for highlighting key insights
 
             ### DataFrame Information:
             - Columns: {', '.join(data_info['columns'])}

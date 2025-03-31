@@ -796,3 +796,129 @@ def generate_insights():
             "type": str(type(e).__name__),
             "details": "An unexpected error occurred while generating insights"
         }), 500
+
+
+
+
+
+
+
+######################
+def update_current_namespace(namespace: str, file_name: str):
+    """Update the current active namespace"""
+    global current_namespace
+    current_namespace = {
+        "name": namespace,
+        "timestamp": datetime.now().isoformat(),
+        "file_name": file_name
+    }
+    logging.info(f"Updated current namespace to: {namespace} from file: {file_name}")
+
+def save_uploaded_file(file):
+    """Handle file upload and update current_file state"""
+    if not file or not file.filename:
+        raise ValueError("No file provided")
+    
+    if not file.filename.endswith('.csv'):
+        raise ValueError("Only CSV files are allowed")
+    
+    filename = secure_filename(file.filename)
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(file_path)
+    
+    namespace = os.path.splitext(filename)[0]
+    
+    global current_file
+    current_file.update({
+        "path": file_path,
+        "name": filename,
+        "namespace": namespace,
+        "timestamp": datetime.now().isoformat(),
+        "has_embeddings": False,
+        "has_insights": False
+    })
+    
+    return file_path
+
+def create_and_store_dataframe(file_path):
+    """
+    Create DataFrame from uploaded CSV file and store it in memory.
+    
+    Args:
+        file_path (str): Path to the uploaded CSV file
+        
+    Returns:
+        dict: DataFrame information including shape and columns
+    """
+    try:
+        # Read CSV file into DataFrame
+        global current_dataframe
+        current_dataframe = pd.read_csv(file_path)
+        
+        # Get basic DataFrame information
+        df_info = {
+            "rows": len(current_dataframe),
+            "columns": current_dataframe.columns.tolist(),
+            "numeric_columns": current_dataframe.select_dtypes(include=['int64', 'float64']).columns.tolist(),
+            "categorical_columns": current_dataframe.select_dtypes(include=['object']).columns.tolist()
+        }
+        
+        return {
+            "status": "success",
+            "message": "DataFrame created successfully",
+            "df_info": df_info
+        }
+        
+    except Exception as e:
+        logging.error(f"Error creating DataFrame: {str(e)}")
+        return {
+            "status": "error",
+            "message": f"Failed to create DataFrame: {str(e)}"
+        }
+
+def get_current_dataframe():
+    """
+    Get the currently stored DataFrame.
+    
+    Returns:
+        pandas.DataFrame: Current DataFrame or None if no DataFrame is stored
+    """
+    return current_dataframe
+
+
+# ROUTES:
+# Upload file:
+@app.route('/v1/csv-upload', methods=['POST'])
+def upload_file():
+    """Unified file upload endpoint"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({"status": "fail", "message": "No file part in the request"}), 400
+        
+        file = request.files['file']
+        file_path = save_uploaded_file(file)
+        
+        # Create and store DataFrame
+        df_result = create_and_store_dataframe(file_path)
+        
+        if df_result["status"] == "error":
+            return jsonify({
+                "status": "fail",
+                "message": df_result["message"]
+            }), 500
+        logging.info(f"Dataframe created successfully: {df_result}")
+        return jsonify({
+            "status": "success",
+            "message": "File uploaded successfully",
+            "file_details": {
+                "name": current_file["name"],
+                "timestamp": current_file["timestamp"],
+                "df_info": df_result["df_info"]
+            }
+        }), 200
+        
+    except Exception as e:
+        logging.error(f"Error uploading file: {str(e)}", exc_info=True)
+        return jsonify({"status": "fail", "message": str(e)}), 500
+
+

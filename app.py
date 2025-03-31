@@ -33,7 +33,6 @@ UPLOAD_FOLDER = './uploads'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
 
-
 # Ensure the upload folder exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
@@ -281,8 +280,8 @@ def generate_insights():
                 logging.error(f"Failed to generate LLM analysis: {str(e)}")
                 response_data["llm_analysis"] = {"error": str(e)}
 
-        # # Generate visualizations if requested
-        # # Generate visualizations if requested
+        # Generate visualizations if requested
+        # Generate visualizations if requested
         # if generate_viz:
         #     logging.info("Generating visualizations")
         #     try:
@@ -468,19 +467,33 @@ def generate_analysis_from_query():
         # Create analysis service and generate analysis
         try:
             analysis_generator = ChatToAnalysisGenerator()
-            
             analysis_result = analysis_generator.generate_analysis(
                 df=df,
                 user_query=user_query
             )
             
             if analysis_result['status'] == 'success':
-                # Recursively convert all non-serializable objects in the result
-                serializable_result = convert_to_serializable(analysis_result['result'])
+                def deep_serialize(obj):
+                    if isinstance(obj, (pd.DataFrame, pd.Series)):
+                        return obj.to_dict(orient='records')
+                    elif isinstance(obj, np.ndarray):
+                        return obj.tolist()
+                    elif isinstance(obj, np.generic):
+                        return obj.item()
+                    elif isinstance(obj, (int, float, str, bool, type(None))):
+                        return obj
+                    elif isinstance(obj, dict):
+                        return {k: deep_serialize(v) for k, v in obj.items()}
+                    elif isinstance(obj, (list, tuple)):
+                        return [deep_serialize(item) for item in obj]
+                    else:
+                        return str(obj)
+
+                serialized_result = deep_serialize(analysis_result['result'])
                 
                 return jsonify({
                     "status": "success",
-                    "result": serializable_result,
+                    "result": serialized_result,
                     "answer": analysis_result['answer'],
                     "analysis_code": analysis_result['code'],
                     "query": user_query
