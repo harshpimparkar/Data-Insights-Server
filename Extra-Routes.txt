@@ -1,3 +1,21 @@
+from server.QueryHelper.CSVtoEmbedding import EmbeddingGenerator
+from StoreEmbeddings import store_embeddings
+from QuerytoEmbeddings import query_to_embedding
+chat_to_vis_service = ChatVisualizationService()
+emb_service = EmbeddingGenerator()
+Load environment variables
+
+# Get Pinecone configuration
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX")
+if not PINECONE_API_KEY or not PINECONE_INDEX_NAME:
+    raise EnvironmentError("Pinecone API key or index name is not set.")
+
+# Initialize Pinecone client
+pc = Pinecone(api_key=PINECONE_API_KEY)
+index = pc.Index(PINECONE_INDEX_NAME)
+
+
 @app.route('/v1/chat-extended', methods=['POST'])
 def chat_with_csv():
     """

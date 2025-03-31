@@ -16,36 +16,23 @@ from GroqInitialize import initialize_groq_api
 from GeminiHelper.gemini_service import VisualizationService
 from ChatVis.ChatToVisGenerator import ChatToVisGenerator
 from ChatAnalysis.ChatToAnalysisGenerator import ChatToAnalysisGenerator
-# from server.QueryHelper.CSVtoEmbedding import EmbeddingGenerator
-# from StoreEmbeddings import store_embeddings
-# from QuerytoEmbeddings import query_to_embedding
-# chat_to_vis_service = ChatVisualizationService()
-# emb_service = EmbeddingGenerator()
-# Load environment variables
 viz_service = VisualizationService()
+
 load_dotenv()
 # Initialize the Flask app
 app = Flask(__name__)
 CORS(app)
+
+# Initialize logging
+logging.basicConfig(level=logging.INFO)
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # Configure upload folder
 UPLOAD_FOLDER = './uploads'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
 
-# Get Pinecone configuration
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not PINECONE_API_KEY or not PINECONE_INDEX_NAME:
-    raise EnvironmentError("Pinecone API key or index name is not set.")
-
-# Initialize Pinecone client
-pc = Pinecone(api_key=PINECONE_API_KEY)
-index = pc.Index(PINECONE_INDEX_NAME)
-
-# Initialize logging
-logging.basicConfig(level=logging.INFO)
 
 # Ensure the upload folder exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -150,6 +137,7 @@ current_file = {
 }
 
 # ROUTES:
+# Upload file:
 @app.route('/v1/csv-upload', methods=['POST'])
 def upload_file():
     """Unified file upload endpoint"""
@@ -183,95 +171,7 @@ def upload_file():
         logging.error(f"Error uploading file: {str(e)}", exc_info=True)
         return jsonify({"status": "fail", "message": str(e)}), 500
 
-# metadata from the file:
-@app.route('/v1/csv-metadata', methods=['GET'])
-def get_csv_metadata():
-    """Get detailed metadata and sample data from the uploaded CSV file"""
-    try:
-        if not current_file.get("path"):
-            return jsonify({
-                "status": "fail", 
-                "message": "No file uploaded. Please upload a file first."
-            }), 400
-            
-        file_path = current_file.get("path")
-        
-        # Get file system stats
-        file_stats = os.stat(file_path)
-        file_size_bytes = file_stats.st_size
-        file_size_mb = round(file_size_bytes / (1024 * 1024), 2)
-        
-        # Read the CSV file
-        df = pd.read_csv(file_path)
-        
-        # Get the top 5 rows
-        sample_data = df.head(5).to_dict(orient='records')
-        
-        # Get column information
-        columns_info = []
-        for col in df.columns:
-            # Determine the data type
-            dtype = str(df[col].dtype)
-            python_type = df[col].map(type).value_counts().index[0].__name__
-            
-            # Get non-null count and percentage
-            non_null_count = df[col].count()
-            non_null_percentage = round((non_null_count / len(df)) * 100, 2)
-            
-            # Get unique value count and percentage
-            unique_count = df[col].nunique()
-            unique_percentage = round((unique_count / len(df)) * 100, 2)
-            
-            # Get min, max for numeric columns
-            min_val = df[col].min() if pd.api.types.is_numeric_dtype(df[col]) else None
-            max_val = df[col].max() if pd.api.types.is_numeric_dtype(df[col]) else None
-            
-            # Get a few sample values
-            sample_values = df[col].dropna().unique()[:3].tolist()
-            
-            columns_info.append({
-                "name": col,
-                "pandas_dtype": dtype,
-                "python_type": python_type,
-                "non_null_count": non_null_count,
-                "non_null_percentage": non_null_percentage,
-                "unique_count": unique_count,
-                "unique_percentage": unique_percentage,
-                "min_value": min_val,
-                "max_value": max_val,
-                "sample_values": sample_values
-            })
-        
-        # Build the response
-        response = {
-            "status": "success",
-            "metadata": {
-                "filename": current_file.get("name"),
-                "file_size_bytes": file_size_bytes,
-                "file_size_mb": file_size_mb,
-                "row_count": len(df),
-                "column_count": len(df.columns),
-                "columns": columns_info,
-                "memory_usage": {
-                    "total": round(df.memory_usage(deep=True).sum() / (1024 * 1024), 2),
-                    "unit": "MB"
-                },
-                "has_index": not df.index.equals(pd.RangeIndex(start=0, stop=len(df)))
-            },
-            "sample_data": sample_data
-        }
-        
-        return jsonify(response), 200
-        
-    except Exception as e:
-        logging.error(f"Error generating metadata: {str(e)}", exc_info=True)
-        return jsonify({
-            "status": "fail",
-            "message": str(e),
-            "type": str(type(e).__name__),
-            "details": "An unexpected error occurred while generating metadata"
-        }), 500
-
+# Insights:
 @app.route('/v1/csv-insights', methods=['GET'])
 def generate_insights():
     """Generate insights and visualizations from the uploaded file"""
@@ -515,18 +415,6 @@ def generate_visualizations_from_query():
         }), 500
               
 # Chat to Analysis:
-
-def convert_to_serializable(obj):
-    """Recursively convert pandas Series, numpy arrays, and other non-serializable objects to JSON-serializable formats."""
-    if isinstance(obj, (pd.Series, np.ndarray)):
-        return obj.tolist()
-    elif isinstance(obj, dict):
-        return {k: convert_to_serializable(v) for k, v in obj.items()}
-    elif isinstance(obj, (list, tuple)):
-        return [convert_to_serializable(item) for item in obj]
-    else:
-        return obj
-
 @app.route('/v1/query-analysis', methods=['POST'])
 def generate_analysis_from_query():
     """Generate data analysis based on user query about the uploaded file"""
@@ -626,7 +514,17 @@ def generate_analysis_from_query():
             "message": "An unexpected error occurred",
             "details": str(e)
         }), 500
-        
+      
+def convert_to_serializable(obj):
+    """Recursively convert pandas Series, numpy arrays, and other non-serializable objects to JSON-serializable formats."""
+    if isinstance(obj, (pd.Series, np.ndarray)):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {k: convert_to_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [convert_to_serializable(item) for item in obj]
+    else:
+        return obj  
 
 # Run the app
 if __name__ == '__main__':
