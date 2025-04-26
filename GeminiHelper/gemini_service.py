@@ -161,7 +161,7 @@ class VisualizationService:
 
         return "\n".join(prompt_parts)
 
-    def generate_visualizations(self, df: pd.DataFrame, insights: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_visualizations(self, df: pd.DataFrame, insights: Dict[str, Any], dataset_name: str) -> Dict[str, Any]:
         """Generate visualizations with improved data type handling and error recovery."""
         try:
             # Preprocess DataFrame and handle categorical data
@@ -188,7 +188,8 @@ class VisualizationService:
                     
                     success, code, namespace = self.viz_generator.generate_visualization(
                         df=df,
-                        insight_text=viz_prompt
+                        insight_text=viz_prompt,
+                        dataset_name=dataset_name 
                     )
                     
                     last_code = code  # Save code for debugging

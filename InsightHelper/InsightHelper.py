@@ -150,7 +150,7 @@ def generate_insight_llm_prompt(insights_context):
         "4. Generate Actionable recommendations based on the insights and keep it simple and applicable in real world.\n"
         "5. Predictions or forecasts derived from the data if applicable.\n"
         "5. Diagnostic analysis of the data based on the insights.\n"
-        "6. Recommendations for the best visualization methods to represent trends and "
+        "6. Recommendations for the best visualization methods to represent trends (No Scatter plot please) "
         "insights, specifying the features and variable names to use. Maximum 2-3"
     )
 

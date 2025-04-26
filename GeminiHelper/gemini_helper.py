@@ -160,7 +160,7 @@ def preprocess_dataframe(df):
 
     def generate_visualization(self, 
                         df: pd.DataFrame, 
-                        insight_text: str,dataset_name: str) -> Tuple[bool, str, Dict[str, Any]]:
+                        insight_text: str, dataset_name: str) -> Tuple[bool, str, Dict[str, Any]]:
         """Generate and execute visualization based on insight text with improved error reporting."""
         try:
             # Preprocess the DataFrame
